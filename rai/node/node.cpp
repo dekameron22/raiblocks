@@ -3694,7 +3694,7 @@ bool rai::election::publish (std::shared_ptr<rai::block> block_a)
 	return result;
 }
 
-void rai::active_transactions::announce_votes ()
+void rai::active_transactions::announce_votes (std::unique_lock<std::mutex> & lock_a)
 {
 	std::unordered_set<rai::block_hash> inactive;
 	auto transaction (node.store.tx_begin_read ());
@@ -3704,8 +3704,10 @@ void rai::active_transactions::announce_votes ()
 	std::vector<rai::block_hash> blocks_bundle;
 	std::deque<std::shared_ptr<rai::block>> rebroadcast_bundle;
 
+	auto roots_size (roots.size ());
 	for (auto i (roots.begin ()), n (roots.end ()); i != n; ++i)
 	{
+		lock_a.unlock ();
 		auto election_l (i->election);
 		if ((election_l->confirmed || election_l->aborted) && i->announcements >= announcement_min - 1)
 		{
@@ -3734,7 +3736,7 @@ void rai::active_transactions::announce_votes ()
 				/* Escalation for long unconfirmed elections
 				Start new elections for previous block & source
 				if there are less than 100 active elections */
-				if (i->announcements % announcement_long == 1 && roots.size () < 100)
+				if (i->announcements % announcement_long == 1 && roots_size < 100)
 				{
 					auto previous_hash (election_l->status.winner->previous ());
 					if (!previous_hash.is_zero ())
@@ -3823,6 +3825,7 @@ void rai::active_transactions::announce_votes ()
 				}
 			}
 		}
+		lock_a.lock ();
 		roots.modify (i, [](rai::conflict_info & info_a) {
 			++info_a.announcements;
 		});
@@ -3872,7 +3875,7 @@ void rai::active_transactions::announce_loop ()
 	condition.notify_all ();
 	while (!stopped)
 	{
-		announce_votes ();
+		announce_votes (lock);
 		condition.wait_for (lock, std::chrono::milliseconds (announce_interval_ms + roots.size () * node.network.broadcast_interval_ms));
 	}
 }
